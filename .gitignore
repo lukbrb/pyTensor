@@ -1,0 +1,8 @@
+rTensor/
+*.pyc
+*.txt
+.Rhistory
+.RData
+*.R
+tensortest.py
+tensorlytest.py
