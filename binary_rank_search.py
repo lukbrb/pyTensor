@@ -14,6 +14,7 @@ def compute_error(tensor: tl.tensor, rank: int, n_iter_max: int = 2000000, tol: 
 
 
 def optimize_rank(tenseur: tl.tensor, low_rank: int, high_rank: int) -> dict:
+    errors = dict()
     while (high_rank - low_rank) > 0:
         current_rank = int(np.ceil((low_rank + high_rank) / 2))
 
@@ -36,7 +37,6 @@ def optimize_rank(tenseur: tl.tensor, low_rank: int, high_rank: int) -> dict:
 
 
 if __name__ == '__main__':
-    errors = dict()
     m1 = np.loadtxt("m1.txt", dtype=np.int32)
     m2 = np.loadtxt("m2.txt", dtype=np.int32)
     tenseur = tl.tensor(np.concatenate((m1[..., None], m2[..., None]), axis=2))  # [..., None] crée un nouvel axe vide
