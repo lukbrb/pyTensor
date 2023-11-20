@@ -61,7 +61,7 @@ def rs_unfold(tensor: Tensor, m: int, order='F') -> Tensor:
 
 
 # Validé par essai manuel
-def superdiagonal_tensor(num_modes, length, elements=1):
+def superdiagonal_tensor2(num_modes, length, elements=1):
     modes = [length] * num_modes
     arr = np.zeros(modes, dtype=np.float32)
 
@@ -103,13 +103,41 @@ def kronecker_list(L):
     return result
 
 
-def khatri_rao_list(L, reverse=False):
+def superdiagonal_tensor(num_modes, length, elements=1):
+    modes = np.repeat(length, num_modes)
+    arr = np.zeros(modes)
+    if isinstance(elements, int) == 1:
+        elements = np.repeat(elements, length)
+    for i in range(length):
+        txt = "arr[" + ",".join([str(i)] * num_modes) + "]=" + str(elements[i])
+        txt = txt.replace(" ", ", ")
+        print(txt)
+        exec(txt)
+    return arr
+
+
+def khatri_rao_list_2(L, reverse=False):
     if reverse:
         L = L[::-1]
 
     retmat = L[0]
     for matrice in L[1:]:
         retmat = linalg.khatri_rao(retmat, matrice)
+    return retmat
+
+
+def khatri_rao_list(L, reverse=False):
+    assert all([isinstance(x, np.ndarray) for x in L]), "All elements in L must be matrices"
+    ncols = [x.shape[1] for x in L]
+    assert len(set(ncols)) == 1, "All matrices in L must have the same number of columns"
+    ncols = ncols[0]
+    nrows = [x.shape[0] for x in L]
+    retmat = np.zeros((np.prod(nrows), ncols))
+    if reverse:
+        L = L[::-1]
+    for j in range(ncols):
+        Lj = [x[:, j] for x in L]
+        retmat[:, j] = kronecker_list(Lj)
     return retmat
 
 

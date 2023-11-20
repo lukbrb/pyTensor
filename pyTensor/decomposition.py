@@ -4,6 +4,7 @@ import numpy as np
 from scipy.linalg import inv
 from pyTensor.tensorclass import Tensor, khatri_rao_list, rs_unfold, superdiagonal_tensor, ttl
 from rpy2.robjects.packages import importr
+
 rtensor = importr('rTensor')
 
 """ Typiquement, pour un ndarray (n, m, l):
@@ -22,14 +23,14 @@ def norm(array: np.ndarray):
 
 # Vérfiée et testée pour matrices et tenseur
 def fnorm(array: np.ndarray):
-    return np.sqrt(np.sum(array**2))  # voir axe de sommation
+    return np.sqrt(np.sum(array ** 2))  # voir axe de sommation
 
 
 def rep(val: int | float, num_rep: int):
     return [val] * num_rep
 
 
-def hadamard_list(L: List|np.ndarray):
+def hadamard_list(L: List | np.ndarray):
     # verifier que chacun est un vecteur ou matrice
 
     retmat = L[1]
@@ -50,36 +51,38 @@ def norm_vec(vec):
     return norm(np.asarray(vec))
 
 
-def cp(tnsr: Tensor, num_components: int, max_iter=25, tol=1e-5):
-    if not num_components: raise ValueError("num_components must be specified")
-    if not isinstance(tnsr, Tensor): raise ValueError("'tnsr' must an instance of the Tensor class.")
-    if tnsr.is_zero_tensor(): return ValueError("Zero tensor detected")
+import numpy as np
+from numpy.linalg import norm
+from scipy.linalg import hadamard, khatri_rao
 
+
+def cp(tnsr, rank=None, max_iter=25, tol=1e-5):
     num_modes = tnsr.num_modes
     modes = tnsr.modes
-    U_list = [None] * num_modes  # Présume que num_modes est une liste, ou un np.array
-    unfolded_mat = [None] * num_modes  # La même chose ?
-    tnsr_norm = fnorm(tnsr)
+    U_list = [None] * num_modes
+    unfolded_mat = [None] * num_modes
+    tnsr_norm = np.linalg.norm(tnsr)
 
     for m in range(num_modes):
-        unfolded_mat[m] = rs_unfold(tnsr, m=m).data  # rs_unfold renvoie un tenseur
-        U_list[m] = np.random.normal(loc=0.0, scale=1.0, size=(modes[m], num_components))
+        unfolded_mat[m] = rs_unfold(tnsr, m=m).data
+        U_list[m] = np.random.randn(modes[m], rank)
 
-    est = tnsr.data
+    est = tnsr
     curr_iter = 1
     converged = False
-
-    # set up converged check
-
     fnorm_resid = np.zeros(max_iter)
 
-    def check_conv(est: Tensor):
-        curr_resid = fnorm(est - tnsr)
-        fnorm_resid[
-            curr_iter] = curr_resid  # <= pour modifier dans la fonction parent
-        # https://stackoverflow.com/questions/2628621/how-do-you-use-scoping-assignment-in-r
+    def CHECK_CONV(est):
+        nonlocal curr_iter
+        nonlocal converged
+        nonlocal fnorm_resid
 
-        if curr_iter == 1: return False
+        curr_resid = np.linalg.norm(est - tnsr)
+        fnorm_resid[curr_iter] = curr_resid
+
+        if curr_iter == 1:
+            return False
+
         if abs(curr_resid - fnorm_resid[curr_iter - 1]) / tnsr_norm < tol:
             return True
         else:
@@ -87,37 +90,94 @@ def cp(tnsr: Tensor, num_components: int, max_iter=25, tol=1e-5):
 
     while curr_iter < max_iter and not converged:
         for m in range(num_modes):
-            U_list_sans_m = [item for i, item in enumerate(U_list) if i != m]
-            # temp_list = [U_list_sans_m[i].T @ U_list_sans_m[i] for i in range(0, m) if i !=m] # ou
-            temp_list = np.array(list(map(lambda x: np.dot(np.transpose(x), x), U_list_sans_m)))
-            V = hadamard_list(temp_list)
-            V_inv = np.linalg.pinv(V)
-            test_k = khatri_rao_list(U_list_sans_m, reverse=True)
-            tmp = np.dot(unfolded_mat[m], np.dot(test_k, V_inv))
+            V = [np.dot(np.transpose(x), x) for x in U_list[:m] + U_list[m + 1:]]
+            V_inv = np.linalg.solve(V, b=np.ones_like(V))
+            tmp = np.dot(unfolded_mat[m], khatri_rao_list(U_list[:m] + U_list[m + 1:], reverse=True) @ V_inv)
+            lambdas = np.apply_along_axis(norm, 0, tmp)
+            U_list[m] = np.divide(tmp, lambdas)
+            Z = superdiagonal_tensor(num_modes=num_modes, length=rank, elements=lambdas)
+            est = ttl(Z, U_list, ms=list(range(1, num_modes + 1)))
 
-            lambdas = np.apply_along_axis(norm_vec, axis=0, arr=tmp)
-            U_list[m] = np.divide(tmp, lambdas[np.newaxis, :])
-
-            Z = superdiagonal_tensor(num_modes, num_components, lambdas)
-            est = ttl(Z, U_list, ms=list(range(num_modes)))
-        if check_conv(est):
+        if CHECK_CONV(est):
             converged = True
         else:
             curr_iter += 1
 
     fnorm_resid = fnorm_resid[fnorm_resid != 0]
-    norm_percent = (1 - (fnorm_resid[-1] / tnsr_norm)) * 100
+    norm_percent = (1 - fnorm_resid[-1] / tnsr_norm) * 100
 
-    results = {
-        "lambdas": lambdas,
-        "U": U_list,
-        "conv": converged,
-        "est": est,
-        "norm_percent": norm_percent,
-        "fnorm_resid": fnorm_resid[-1],
-        "all_resids": fnorm_resid
-    }
-    return results
+    return {'lambdas': lambdas, 'U': U_list, 'conv': converged, 'est': est, 'norm_percent': norm_percent,
+            'fnorm_resid': fnorm_resid[-1], 'all_resids': fnorm_resid}
+
+
+# def cp(tnsr: Tensor, num_components: int, max_iter=25, tol=1e-5):
+#     if not num_components: raise ValueError("num_components must be specified")
+#     if not isinstance(tnsr, Tensor): raise ValueError("'tnsr' must an instance of the Tensor class.")
+#     if tnsr.is_zero_tensor(): return ValueError("Zero tensor detected")
+#
+#     num_modes = tnsr.num_modes
+#     modes = tnsr.modes
+#     U_list = [None] * num_modes  # Présume que num_modes est une liste, ou un np.array
+#     unfolded_mat = [None] * num_modes  # La même chose ?
+#     tnsr_norm = fnorm(tnsr)
+#
+#     for m in range(num_modes):
+#         unfolded_mat[m] = rs_unfold(tnsr, m=m).data  # rs_unfold renvoie un tenseur
+#         U_list[m] = np.random.normal(loc=0.0, scale=1.0, size=(modes[m], num_components))
+#
+#     est = tnsr.data
+#     curr_iter = 1
+#     converged = False
+#
+#     # set up converged check
+#
+#     fnorm_resid = np.zeros(max_iter)
+#
+#     def check_conv(est: Tensor):
+#         curr_resid = fnorm(est - tnsr)
+#         fnorm_resid[
+#             curr_iter] = curr_resid  # <= pour modifier dans la fonction parent
+#         # https://stackoverflow.com/questions/2628621/how-do-you-use-scoping-assignment-in-r
+#
+#         if curr_iter == 1: return False
+#         if abs(curr_resid - fnorm_resid[curr_iter - 1]) / tnsr_norm < tol:
+#             return True
+#         else:
+#             return False
+#
+#     while curr_iter < max_iter and not converged:
+#         for m in range(num_modes):
+#             U_list_sans_m = [item for i, item in enumerate(U_list) if i != m]
+#             # temp_list = [U_list_sans_m[i].T @ U_list_sans_m[i] for i in range(0, m) if i !=m] # ou
+#             temp_list = np.array(list(map(lambda x: np.dot(np.transpose(x), x), U_list_sans_m)))
+#             V = hadamard_list(temp_list)
+#             V_inv = np.linalg.pinv(V)
+#             test_k = khatri_rao_list(U_list_sans_m, reverse=True)
+#             tmp = np.dot(unfolded_mat[m], np.dot(test_k, V_inv))
+#
+#             lambdas = np.apply_along_axis(norm_vec, axis=0, arr=tmp)
+#             U_list[m] = np.divide(tmp, lambdas[np.newaxis, :])
+#
+#             Z = superdiagonal_tensor(num_modes, num_components, lambdas)
+#             est = ttl(Z, U_list, ms=list(range(num_modes)))
+#         if check_conv(est):
+#             converged = True
+#         else:
+#             curr_iter += 1
+#
+#     fnorm_resid = fnorm_resid[fnorm_resid != 0]
+#     norm_percent = (1 - (fnorm_resid[-1] / tnsr_norm)) * 100
+#
+#     results = {
+#         "lambdas": lambdas,
+#         "U": U_list,
+#         "conv": converged,
+#         "est": est,
+#         "norm_percent": norm_percent,
+#         "fnorm_resid": fnorm_resid[-1],
+#         "all_resids": fnorm_resid
+#     }
+#     return results
 
 
 """
